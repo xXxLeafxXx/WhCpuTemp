@@ -2,48 +2,38 @@ name: build-driver
 on:
   push:
   workflow_dispatch:
-
+ 
 jobs:
   build:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-
-      - uses: microsoft/setup-msbuild@v2
-
-      - name: Install WDK
-        shell: pwsh
+ 
+      - name: Build driver (cl + link, WDK headers/libs from the runner image)
+        shell: cmd
         run: |
-          Write-Host "Installed Windows SDKs:"
-          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include" | Select-Object -ExpandProperty Name
-          $wdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include\*\km\ntddk.h" -ErrorAction SilentlyContinue
-          if ($wdk) {
-            Write-Host "WDK headers already present: $($wdk[0].FullName)"
-          } else {
-            choco install windowsdriverkit11 --no-progress -y
-          }
-          Write-Host "WDK headers after install:"
-          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include\*\km\ntddk.h" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-          Write-Host "WDK VS extension:"
-          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Vsix" -Recurse -Filter WDK.vsix -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-
-      - name: Build
-        shell: pwsh
-        run: msbuild WhCpuTemp.vcxproj /p:Configuration=Release /p:Platform=x64
-
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          if errorlevel 1 exit /b 1
+          set WDK=C:\Program Files (x86)\Windows Kits\10
+          set VER=10.0.26100.0
+          cl /nologo /c /kernel /GS- /Gz /W3 /O2 /Zi /D_AMD64_ /DAMD64 /D_WIN64 /DNTDDI_VERSION=0x0A000000 /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /DPOOL_NX_OPTIN=1 /I"%WDK%\Include\%VER%\km" /I"%WDK%\Include\%VER%\km\crt" /I"%WDK%\Include\%VER%\shared" /I"%WDK%\Include\%VER%\um" WhCpuTemp.c
+          if errorlevel 1 exit /b 1
+          link /nologo /DRIVER /SUBSYSTEM:NATIVE /ENTRY:DriverEntry /NODEFAULTLIB /RELEASE /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT /INTEGRITYCHECK /DEBUG /OUT:WhCpuTemp.sys /LIBPATH:"%WDK%\Lib\%VER%\km\x64" WhCpuTemp.obj ntoskrnl.lib hal.lib BufferOverflowFastFailK.lib
+          if errorlevel 1 exit /b 1
+          dir WhCpuTemp.sys
+ 
       - name: Test-sign
         shell: pwsh
         run: |
           $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=WhCpuTemp Test" -CertStoreLocation Cert:\CurrentUser\My
           Export-Certificate -Cert $cert -FilePath WhCpuTemp.cer
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
-          $sys = Get-ChildItem -Recurse -Filter WhCpuTemp.sys | Select-Object -First 1
-          & $signtool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint /s My $sys.FullName
-          Copy-Item $sys.FullName .
-
+          & $signtool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint /s My WhCpuTemp.sys
+ 
       - uses: actions/upload-artifact@v4
         with:
           name: WhCpuTemp
           path: |
             WhCpuTemp.sys
             WhCpuTemp.cer
+ 
