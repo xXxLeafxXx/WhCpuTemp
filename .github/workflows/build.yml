@@ -14,12 +14,18 @@ jobs:
       - name: Install WDK
         shell: pwsh
         run: |
-          winget install --id Microsoft.WindowsSDK.10.0.26100 -e --silent --accept-package-agreements --accept-source-agreements
-          winget install --id Microsoft.WindowsWDK.10.0.26100 -e --silent --accept-package-agreements --accept-source-agreements
-          $vsix = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Vsix\VS2022" -Recurse -Filter WDK.vsix | Select-Object -First 1
-          $inst = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\resources\app\ServiceHub\Services\Microsoft.VisualStudio.Setup.Service\VSIXInstaller.exe"
-          & $inst /quiet /admin $vsix.FullName
-          Start-Sleep 20
+          Write-Host "Installed Windows SDKs:"
+          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include" | Select-Object -ExpandProperty Name
+          $wdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include\*\km\ntddk.h" -ErrorAction SilentlyContinue
+          if ($wdk) {
+            Write-Host "WDK headers already present: $($wdk[0].FullName)"
+          } else {
+            choco install windowsdriverkit11 --no-progress -y
+          }
+          Write-Host "WDK headers after install:"
+          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include\*\km\ntddk.h" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          Write-Host "WDK VS extension:"
+          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Vsix" -Recurse -Filter WDK.vsix -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
 
       - name: Build
         shell: pwsh
