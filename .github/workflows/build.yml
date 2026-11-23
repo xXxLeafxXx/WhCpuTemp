@@ -1,0 +1,43 @@
+name: build-driver
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Install WDK
+        shell: pwsh
+        run: |
+          winget install --id Microsoft.WindowsSDK.10.0.26100 -e --silent --accept-package-agreements --accept-source-agreements
+          winget install --id Microsoft.WindowsWDK.10.0.26100 -e --silent --accept-package-agreements --accept-source-agreements
+          $vsix = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Vsix\VS2022" -Recurse -Filter WDK.vsix | Select-Object -First 1
+          $inst = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\resources\app\ServiceHub\Services\Microsoft.VisualStudio.Setup.Service\VSIXInstaller.exe"
+          & $inst /quiet /admin $vsix.FullName
+          Start-Sleep 20
+
+      - name: Build
+        shell: pwsh
+        run: msbuild WhCpuTemp.vcxproj /p:Configuration=Release /p:Platform=x64
+
+      - name: Test-sign
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=WhCpuTemp Test" -CertStoreLocation Cert:\CurrentUser\My
+          Export-Certificate -Cert $cert -FilePath WhCpuTemp.cer
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          $sys = Get-ChildItem -Recurse -Filter WhCpuTemp.sys | Select-Object -First 1
+          & $signtool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint /s My $sys.FullName
+          Copy-Item $sys.FullName .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhCpuTemp
+          path: |
+            WhCpuTemp.sys
+            WhCpuTemp.cer
